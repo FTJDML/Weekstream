@@ -1,0 +1,357 @@
+{
+  "generated_at": "2026-06-10T09:33:33.046946+02:00",
+  "period_days": 3,
+  "executive_bullets": [
+    "Dominante thema's: models (4), enterprise (2), retail (2), agents (1).",
+    "Retail-signalen: 2 items raken retail, e-commerce, pricing, voorraad, winkeloperatie of klantbeleving.",
+    "Hoogst gerankte items: New multimodal model improves agent workflows for enterprise users; Retailers test AI shopping assistants for product search and loyalty personalization; Regulators publish guidance on AI transparency and model risk management."
+  ],
+  "top_articles": [
+    {
+      "source_name": "Sample Lab",
+      "source_group": "lab",
+      "title": "New multimodal model improves agent workflows for enterprise users",
+      "url": "https://example.com/model-agent-workflows",
+      "published_at": "2026-06-09T23:33:33.045250+00:00",
+      "feed_summary": "A research lab introduced a multimodal model that can plan tool calls, inspect documents and support multi-step business workflows.",
+      "content": "",
+      "summary": "A research lab introduced a multimodal model that can plan tool calls, inspect documents and support multi-step business workflows.",
+      "why_matters": "Relevant omdat agentic AI werkprocessen kan automatiseren en softwaregebruik verandert.",
+      "retail_relevance": "",
+      "retail_categories": [],
+      "tags": [
+        "agents",
+        "enterprise",
+        "models",
+        "research"
+      ],
+      "score": 5.733
+    },
+    {
+      "source_name": "Sample Retail Tech",
+      "source_group": "media",
+      "title": "Retailers test AI shopping assistants for product search and loyalty personalization",
+      "url": "https://example.com/retail-shopping-assistants",
+      "published_at": "2026-06-09T16:33:33.045250+00:00",
+      "feed_summary": "Large retailers are testing generative AI shopping assistants that combine product search, recommendations, loyalty data and customer service in one interface.",
+      "content": "",
+      "summary": "Large retailers are testing generative AI shopping assistants that combine product search, recommendations, loyalty data and customer service in one interface.",
+      "why_matters": "Kan invloed hebben op commerciële strategie, operatie, klantbeleving of datagedreven besluitvorming.",
+      "retail_relevance": "Relevant voor retail door: Retail algemeen, Search, personalisatie en loyalty.",
+      "retail_categories": [
+        "Retail algemeen",
+        "Search, personalisatie en loyalty"
+      ],
+      "tags": [
+        "retail"
+      ],
+      "score": 5.481
+    },
+    {
+      "source_name": "Sample Policy",
+      "source_group": "policy",
+      "title": "Regulators publish guidance on AI transparency and model risk management",
+      "url": "https://example.com/ai-governance-guidance",
+      "published_at": "2026-06-09T07:33:33.045250+00:00",
+      "feed_summary": "New guidance emphasizes documentation, risk assessment, auditability and human oversight for high-impact AI systems.",
+      "content": "",
+      "summary": "New guidance emphasizes documentation, risk assessment, auditability and human oversight for high-impact AI systems.",
+      "why_matters": "Belangrijk voor compliance, risico-inschatting en governance rond AI-toepassingen.",
+      "retail_relevance": "",
+      "retail_categories": [],
+      "tags": [
+        "models",
+        "policy-safety"
+      ],
+      "score": 4.9
+    },
+    {
+      "source_name": "Sample Supply Chain",
+      "source_group": "media",
+      "title": "Grocers use demand forecasting models to reduce stockouts and markdowns",
+      "url": "https://example.com/grocery-demand-forecasting",
+      "published_at": "2026-06-08T07:33:33.045250+00:00",
+      "feed_summary": "Grocery chains are expanding AI demand planning to improve replenishment, reduce out-of-stock rates and optimize promotions.",
+      "content": "",
+      "summary": "Grocery chains are expanding AI demand planning to improve replenishment, reduce out-of-stock rates and optimize promotions.",
+      "why_matters": "Kan invloed hebben op commerciële strategie, operatie, klantbeleving of datagedreven besluitvorming.",
+      "retail_relevance": "Relevant voor retail door: Pricing, promoties en revenue, Supermarkt en food retail, Supply chain, voorraad en demand planning.",
+      "retail_categories": [
+        "Pricing, promoties en revenue",
+        "Supermarkt en food retail",
+        "Supply chain, voorraad en demand planning"
+      ],
+      "tags": [
+        "models",
+        "retail"
+      ],
+      "score": 4.9
+    },
+    {
+      "source_name": "Sample Infra",
+      "source_group": "media",
+      "title": "Cloud providers expand inference infrastructure as AI usage grows",
+      "url": "https://example.com/inference-infrastructure",
+      "published_at": "2026-06-08T01:33:33.045250+00:00",
+      "feed_summary": "Cloud and chip providers are adding inference capacity for enterprises that are scaling production AI use cases.",
+      "content": "",
+      "summary": "Cloud and chip providers are adding inference capacity for enterprises that are scaling production AI use cases.",
+      "why_matters": "Kan impact hebben op kosten, beschikbaarheid en schaalbaarheid van AI-toepassingen.",
+      "retail_relevance": "",
+      "retail_categories": [],
+      "tags": [
+        "chips-infra",
+        "enterprise",
+        "models"
+      ],
+      "score": 3.812
+    }
+  ],
+  "retail_articles": [
+    {
+      "source_name": "Sample Retail Tech",
+      "source_group": "media",
+      "title": "Retailers test AI shopping assistants for product search and loyalty personalization",
+      "url": "https://example.com/retail-shopping-assistants",
+      "published_at": "2026-06-09T16:33:33.045250+00:00",
+      "feed_summary": "Large retailers are testing generative AI shopping assistants that combine product search, recommendations, loyalty data and customer service in one interface.",
+      "content": "",
+      "summary": "Large retailers are testing generative AI shopping assistants that combine product search, recommendations, loyalty data and customer service in one interface.",
+      "why_matters": "Kan invloed hebben op commerciële strategie, operatie, klantbeleving of datagedreven besluitvorming.",
+      "retail_relevance": "Relevant voor retail door: Retail algemeen, Search, personalisatie en loyalty.",
+      "retail_categories": [
+        "Retail algemeen",
+        "Search, personalisatie en loyalty"
+      ],
+      "tags": [
+        "retail"
+      ],
+      "score": 5.481
+    },
+    {
+      "source_name": "Sample Supply Chain",
+      "source_group": "media",
+      "title": "Grocers use demand forecasting models to reduce stockouts and markdowns",
+      "url": "https://example.com/grocery-demand-forecasting",
+      "published_at": "2026-06-08T07:33:33.045250+00:00",
+      "feed_summary": "Grocery chains are expanding AI demand planning to improve replenishment, reduce out-of-stock rates and optimize promotions.",
+      "content": "",
+      "summary": "Grocery chains are expanding AI demand planning to improve replenishment, reduce out-of-stock rates and optimize promotions.",
+      "why_matters": "Kan invloed hebben op commerciële strategie, operatie, klantbeleving of datagedreven besluitvorming.",
+      "retail_relevance": "Relevant voor retail door: Pricing, promoties en revenue, Supermarkt en food retail, Supply chain, voorraad en demand planning.",
+      "retail_categories": [
+        "Pricing, promoties en revenue",
+        "Supermarkt en food retail",
+        "Supply chain, voorraad en demand planning"
+      ],
+      "tags": [
+        "models",
+        "retail"
+      ],
+      "score": 4.9
+    }
+  ],
+  "research_articles": [
+    {
+      "source_name": "Sample Lab",
+      "source_group": "lab",
+      "title": "New multimodal model improves agent workflows for enterprise users",
+      "url": "https://example.com/model-agent-workflows",
+      "published_at": "2026-06-09T23:33:33.045250+00:00",
+      "feed_summary": "A research lab introduced a multimodal model that can plan tool calls, inspect documents and support multi-step business workflows.",
+      "content": "",
+      "summary": "A research lab introduced a multimodal model that can plan tool calls, inspect documents and support multi-step business workflows.",
+      "why_matters": "Relevant omdat agentic AI werkprocessen kan automatiseren en softwaregebruik verandert.",
+      "retail_relevance": "",
+      "retail_categories": [],
+      "tags": [
+        "agents",
+        "enterprise",
+        "models",
+        "research"
+      ],
+      "score": 5.733
+    },
+    {
+      "source_name": "Sample Policy",
+      "source_group": "policy",
+      "title": "Regulators publish guidance on AI transparency and model risk management",
+      "url": "https://example.com/ai-governance-guidance",
+      "published_at": "2026-06-09T07:33:33.045250+00:00",
+      "feed_summary": "New guidance emphasizes documentation, risk assessment, auditability and human oversight for high-impact AI systems.",
+      "content": "",
+      "summary": "New guidance emphasizes documentation, risk assessment, auditability and human oversight for high-impact AI systems.",
+      "why_matters": "Belangrijk voor compliance, risico-inschatting en governance rond AI-toepassingen.",
+      "retail_relevance": "",
+      "retail_categories": [],
+      "tags": [
+        "models",
+        "policy-safety"
+      ],
+      "score": 4.9
+    },
+    {
+      "source_name": "Sample Supply Chain",
+      "source_group": "media",
+      "title": "Grocers use demand forecasting models to reduce stockouts and markdowns",
+      "url": "https://example.com/grocery-demand-forecasting",
+      "published_at": "2026-06-08T07:33:33.045250+00:00",
+      "feed_summary": "Grocery chains are expanding AI demand planning to improve replenishment, reduce out-of-stock rates and optimize promotions.",
+      "content": "",
+      "summary": "Grocery chains are expanding AI demand planning to improve replenishment, reduce out-of-stock rates and optimize promotions.",
+      "why_matters": "Kan invloed hebben op commerciële strategie, operatie, klantbeleving of datagedreven besluitvorming.",
+      "retail_relevance": "Relevant voor retail door: Pricing, promoties en revenue, Supermarkt en food retail, Supply chain, voorraad en demand planning.",
+      "retail_categories": [
+        "Pricing, promoties en revenue",
+        "Supermarkt en food retail",
+        "Supply chain, voorraad en demand planning"
+      ],
+      "tags": [
+        "models",
+        "retail"
+      ],
+      "score": 4.9
+    },
+    {
+      "source_name": "Sample Infra",
+      "source_group": "media",
+      "title": "Cloud providers expand inference infrastructure as AI usage grows",
+      "url": "https://example.com/inference-infrastructure",
+      "published_at": "2026-06-08T01:33:33.045250+00:00",
+      "feed_summary": "Cloud and chip providers are adding inference capacity for enterprises that are scaling production AI use cases.",
+      "content": "",
+      "summary": "Cloud and chip providers are adding inference capacity for enterprises that are scaling production AI use cases.",
+      "why_matters": "Kan impact hebben op kosten, beschikbaarheid en schaalbaarheid van AI-toepassingen.",
+      "retail_relevance": "",
+      "retail_categories": [],
+      "tags": [
+        "chips-infra",
+        "enterprise",
+        "models"
+      ],
+      "score": 3.812
+    }
+  ],
+  "policy_articles": [
+    {
+      "source_name": "Sample Policy",
+      "source_group": "policy",
+      "title": "Regulators publish guidance on AI transparency and model risk management",
+      "url": "https://example.com/ai-governance-guidance",
+      "published_at": "2026-06-09T07:33:33.045250+00:00",
+      "feed_summary": "New guidance emphasizes documentation, risk assessment, auditability and human oversight for high-impact AI systems.",
+      "content": "",
+      "summary": "New guidance emphasizes documentation, risk assessment, auditability and human oversight for high-impact AI systems.",
+      "why_matters": "Belangrijk voor compliance, risico-inschatting en governance rond AI-toepassingen.",
+      "retail_relevance": "",
+      "retail_categories": [],
+      "tags": [
+        "models",
+        "policy-safety"
+      ],
+      "score": 4.9
+    }
+  ],
+  "all_articles": [
+    {
+      "source_name": "Sample Lab",
+      "source_group": "lab",
+      "title": "New multimodal model improves agent workflows for enterprise users",
+      "url": "https://example.com/model-agent-workflows",
+      "published_at": "2026-06-09T23:33:33.045250+00:00",
+      "feed_summary": "A research lab introduced a multimodal model that can plan tool calls, inspect documents and support multi-step business workflows.",
+      "content": "",
+      "summary": "A research lab introduced a multimodal model that can plan tool calls, inspect documents and support multi-step business workflows.",
+      "why_matters": "Relevant omdat agentic AI werkprocessen kan automatiseren en softwaregebruik verandert.",
+      "retail_relevance": "",
+      "retail_categories": [],
+      "tags": [
+        "agents",
+        "enterprise",
+        "models",
+        "research"
+      ],
+      "score": 5.733
+    },
+    {
+      "source_name": "Sample Retail Tech",
+      "source_group": "media",
+      "title": "Retailers test AI shopping assistants for product search and loyalty personalization",
+      "url": "https://example.com/retail-shopping-assistants",
+      "published_at": "2026-06-09T16:33:33.045250+00:00",
+      "feed_summary": "Large retailers are testing generative AI shopping assistants that combine product search, recommendations, loyalty data and customer service in one interface.",
+      "content": "",
+      "summary": "Large retailers are testing generative AI shopping assistants that combine product search, recommendations, loyalty data and customer service in one interface.",
+      "why_matters": "Kan invloed hebben op commerciële strategie, operatie, klantbeleving of datagedreven besluitvorming.",
+      "retail_relevance": "Relevant voor retail door: Retail algemeen, Search, personalisatie en loyalty.",
+      "retail_categories": [
+        "Retail algemeen",
+        "Search, personalisatie en loyalty"
+      ],
+      "tags": [
+        "retail"
+      ],
+      "score": 5.481
+    },
+    {
+      "source_name": "Sample Policy",
+      "source_group": "policy",
+      "title": "Regulators publish guidance on AI transparency and model risk management",
+      "url": "https://example.com/ai-governance-guidance",
+      "published_at": "2026-06-09T07:33:33.045250+00:00",
+      "feed_summary": "New guidance emphasizes documentation, risk assessment, auditability and human oversight for high-impact AI systems.",
+      "content": "",
+      "summary": "New guidance emphasizes documentation, risk assessment, auditability and human oversight for high-impact AI systems.",
+      "why_matters": "Belangrijk voor compliance, risico-inschatting en governance rond AI-toepassingen.",
+      "retail_relevance": "",
+      "retail_categories": [],
+      "tags": [
+        "models",
+        "policy-safety"
+      ],
+      "score": 4.9
+    },
+    {
+      "source_name": "Sample Supply Chain",
+      "source_group": "media",
+      "title": "Grocers use demand forecasting models to reduce stockouts and markdowns",
+      "url": "https://example.com/grocery-demand-forecasting",
+      "published_at": "2026-06-08T07:33:33.045250+00:00",
+      "feed_summary": "Grocery chains are expanding AI demand planning to improve replenishment, reduce out-of-stock rates and optimize promotions.",
+      "content": "",
+      "summary": "Grocery chains are expanding AI demand planning to improve replenishment, reduce out-of-stock rates and optimize promotions.",
+      "why_matters": "Kan invloed hebben op commerciële strategie, operatie, klantbeleving of datagedreven besluitvorming.",
+      "retail_relevance": "Relevant voor retail door: Pricing, promoties en revenue, Supermarkt en food retail, Supply chain, voorraad en demand planning.",
+      "retail_categories": [
+        "Pricing, promoties en revenue",
+        "Supermarkt en food retail",
+        "Supply chain, voorraad en demand planning"
+      ],
+      "tags": [
+        "models",
+        "retail"
+      ],
+      "score": 4.9
+    },
+    {
+      "source_name": "Sample Infra",
+      "source_group": "media",
+      "title": "Cloud providers expand inference infrastructure as AI usage grows",
+      "url": "https://example.com/inference-infrastructure",
+      "published_at": "2026-06-08T01:33:33.045250+00:00",
+      "feed_summary": "Cloud and chip providers are adding inference capacity for enterprises that are scaling production AI use cases.",
+      "content": "",
+      "summary": "Cloud and chip providers are adding inference capacity for enterprises that are scaling production AI use cases.",
+      "why_matters": "Kan impact hebben op kosten, beschikbaarheid en schaalbaarheid van AI-toepassingen.",
+      "retail_relevance": "",
+      "retail_categories": [],
+      "tags": [
+        "chips-infra",
+        "enterprise",
+        "models"
+      ],
+      "score": 3.812
+    }
+  ],
+  "source_errors": []
+}

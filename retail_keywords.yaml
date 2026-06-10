@@ -1,0 +1,3 @@
+# Run every weekday at 07:00 Europe/Amsterdam local time.
+TZ=Europe/Amsterdam
+0 7 * * 1-5 cd /pad/naar/ai_news_agent && . .venv/bin/activate && set -a && . .env && set +a && python ai_news_agent.py --days 1 --email >> output/cron.log 2>&1

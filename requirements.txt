@@ -1,0 +1,1343 @@
+#!/usr/bin/env python3
+"""
+AI News Digest Agent
+
+Collects AI news from RSS/Atom feeds, filters and ranks articles, creates a
+Dutch digest with a dedicated retail section, and exports to PDF, HTML, JSON,
+and optional e-mail.
+
+Design choices:
+- Uses RSS/Atom first. This is faster, more stable, and more respectful than
+  scraping pages.
+- Keeps only title, link, dates, snippets, and generated summaries. It does not
+  republish full articles.
+- Works without an OpenAI API key using a simple extractive fallback. With an
+  OpenAI API key, summaries and retail relevance improve substantially.
+"""
+
+from __future__ import annotations
+
+import argparse
+import html
+import json
+import logging
+import os
+import re
+import smtplib
+import ssl
+import sys
+import time
+import textwrap
+import urllib.parse
+import xml.etree.ElementTree as ET
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+import requests
+import yaml
+from bs4 import BeautifulSoup
+from dateutil import parser as dt_parser
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import cm
+from reportlab.platypus import (
+    HRFlowable,
+    PageBreak,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
+from xml.sax.saxutils import escape as xml_escape
+
+try:
+    from zoneinfo import ZoneInfo
+except Exception:  # pragma: no cover
+    ZoneInfo = None  # type: ignore
+
+try:
+    from openai import OpenAI
+except Exception:  # pragma: no cover
+    OpenAI = None  # type: ignore
+
+
+USER_AGENT = (
+    "ai-news-digest-agent/1.0 "
+    "(+https://example.com; RSS-based news monitoring; contact: set-in-config)"
+)
+
+DEFAULT_AI_FILTER = [
+    "artificial intelligence",
+    "ai",
+    "machine learning",
+    "ml",
+    "large language model",
+    "llm",
+    "generative ai",
+    "genai",
+    "agent",
+    "agentic",
+    "chatbot",
+    "copilot",
+    "computer vision",
+    "foundation model",
+    "deep learning",
+    "robotics",
+]
+
+DEFAULT_RETAIL_KEYWORDS: Dict[str, List[str]] = {
+    "Retail algemeen": [
+        "retail",
+        "retailer",
+        "retailers",
+        "store",
+        "stores",
+        "shop",
+        "shopping",
+        "merchant",
+        "consumer goods",
+        "cpg",
+    ],
+    "E-commerce en marketplaces": [
+        "e-commerce",
+        "ecommerce",
+        "marketplace",
+        "cart",
+        "checkout",
+        "shopify",
+        "amazon",
+        "etsy",
+        "zalando",
+        "mercado libre",
+    ],
+    "Supermarkt en food retail": [
+        "grocery",
+        "grocer",
+        "supermarket",
+        "food retail",
+        "tesco",
+        "carrefour",
+        "aldi",
+        "lidl",
+        "kroger",
+        "walmart",
+        "target",
+    ],
+    "Pricing, promoties en revenue": [
+        "pricing",
+        "price optimization",
+        "dynamic pricing",
+        "promotions",
+        "markdown",
+        "assortment",
+        "merchandising",
+    ],
+    "Search, personalisatie en loyalty": [
+        "personalization",
+        "personalisation",
+        "recommendation",
+        "recommendations",
+        "product search",
+        "loyalty",
+        "customer data",
+        "customer experience",
+    ],
+    "Supply chain, voorraad en demand planning": [
+        "supply chain",
+        "inventory",
+        "stockout",
+        "out-of-stock",
+        "forecasting",
+        "demand planning",
+        "replenishment",
+        "warehouse",
+        "last-mile",
+        "logistics",
+    ],
+    "Winkeloperatie en computer vision": [
+        "store operations",
+        "self-checkout",
+        "checkout-free",
+        "cashierless",
+        "computer vision",
+        "loss prevention",
+        "shrink",
+        "planogram",
+        "shelf",
+    ],
+    "Retail media en advertising": [
+        "retail media",
+        "commerce media",
+        "advertising",
+        "ad targeting",
+        "sponsored products",
+    ],
+}
+
+TAG_KEYWORDS: Dict[str, List[str]] = {
+    "models": [
+        "model",
+        "llm",
+        "large language model",
+        "frontier",
+        "gpt",
+        "claude",
+        "gemini",
+        "llama",
+        "mistral",
+        "benchmark",
+        "inference",
+        "training",
+        "reasoning",
+    ],
+    "agents": ["agent", "agentic", "workflow", "autonomous", "computer use", "tool use"],
+    "enterprise": ["enterprise", "business", "productivity", "copilot", "workflow", "saas"],
+    "research": ["research", "paper", "arxiv", "study", "benchmark", "dataset", "evaluation"],
+    "open-source": ["open source", "open-source", "weights", "hugging face", "github"],
+    "chips-infra": [
+        "chip",
+        "gpu",
+        "nvidia",
+        "amd",
+        "data center",
+        "datacenter",
+        "tpu",
+        "infrastructure",
+        "compute",
+        "cloud",
+    ],
+    "policy-safety": [
+        "regulation",
+        "policy",
+        "safety",
+        "security",
+        "governance",
+        "copyright",
+        "privacy",
+        "liability",
+        "eu ai act",
+        "risk",
+    ],
+}
+
+IMPORTANCE_KEYWORDS = [
+    "launch",
+    "release",
+    "introduce",
+    "announces",
+    "partnership",
+    "raises",
+    "funding",
+    "acquisition",
+    "lawsuit",
+    "regulation",
+    "ban",
+    "safety",
+    "benchmark",
+    "breakthrough",
+    "frontier",
+    "agent",
+    "open source",
+    "enterprise",
+    "retail",
+]
+
+
+@dataclass
+class Source:
+    name: str
+    group: str = "general"
+    feed_url: Optional[str] = None
+    homepage: Optional[str] = None
+    google_news_query: Optional[str] = None
+    topic_filter: List[str] = field(default_factory=list)
+    weight: float = 1.0
+
+
+@dataclass
+class Article:
+    source_name: str
+    source_group: str
+    title: str
+    url: str
+    published_at: Optional[datetime]
+    feed_summary: str = ""
+    content: str = ""
+    summary: str = ""
+    why_matters: str = ""
+    retail_relevance: str = ""
+    retail_categories: List[str] = field(default_factory=list)
+    tags: List[str] = field(default_factory=list)
+    score: float = 0.0
+
+    def as_json(self) -> Dict[str, Any]:
+        d = asdict(self)
+        d["published_at"] = self.published_at.isoformat() if self.published_at else None
+        return d
+
+
+@dataclass
+class Report:
+    generated_at: datetime
+    period_days: int
+    executive_bullets: List[str]
+    top_articles: List[Article]
+    retail_articles: List[Article]
+    research_articles: List[Article]
+    policy_articles: List[Article]
+    all_articles: List[Article]
+    source_errors: List[str]
+
+
+def local_name(tag: str) -> str:
+    if "}" in tag:
+        return tag.rsplit("}", 1)[1].lower()
+    if ":" in tag:
+        return tag.rsplit(":", 1)[1].lower()
+    return tag.lower()
+
+
+def html_to_text(value: str) -> str:
+    if not value:
+        return ""
+    soup = BeautifulSoup(value, "html.parser")
+    text = soup.get_text(" ")
+    return normalize_space(html.unescape(text))
+
+
+def normalize_space(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "")).strip()
+
+
+def canonicalize_url(url: str) -> str:
+    if not url:
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(url.strip())
+        query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        query = [
+            (k, v)
+            for (k, v) in query
+            if not (
+                k.lower().startswith("utm_")
+                or k.lower() in {"fbclid", "gclid", "mc_cid", "mc_eid", "ref"}
+            )
+        ]
+        query_str = urllib.parse.urlencode(query, doseq=True)
+        return urllib.parse.urlunsplit(
+            (parsed.scheme, parsed.netloc.lower(), parsed.path.rstrip("/"), query_str, "")
+        )
+    except Exception:
+        return url.strip()
+
+
+def parse_date(value: str) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        dt = dt_parser.parse(value)
+        if not dt.tzinfo:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def child_text(element: ET.Element, names: Sequence[str]) -> str:
+    wanted = {n.lower() for n in names}
+    for child in list(element):
+        if local_name(child.tag) in wanted:
+            text = "".join(child.itertext()) if list(child) else (child.text or "")
+            if text:
+                return html_to_text(text)
+    return ""
+
+
+def child_raw_text(element: ET.Element, names: Sequence[str]) -> str:
+    wanted = {n.lower() for n in names}
+    for child in list(element):
+        if local_name(child.tag) in wanted:
+            text = "".join(child.itertext()) if list(child) else (child.text or "")
+            if text:
+                return normalize_space(text)
+    return ""
+
+
+def entry_link(element: ET.Element) -> str:
+    # RSS: <link>https://...</link>. Atom: <link href="https://..." />
+    for child in list(element):
+        if local_name(child.tag) == "link":
+            href = child.attrib.get("href")
+            if href:
+                return href.strip()
+            if child.text:
+                return normalize_space(child.text)
+    return ""
+
+
+def parse_feed_xml(xml_content: bytes, source: Source) -> List[Article]:
+    try:
+        root = ET.fromstring(xml_content)
+    except ET.ParseError as exc:
+        raise ValueError(f"Invalid XML feed for {source.name}: {exc}") from exc
+
+    root_name = local_name(root.tag)
+    if root_name in {"rss", "rdf"}:
+        entries = root.findall(".//item")
+    elif root_name == "feed":
+        entries = [child for child in list(root) if local_name(child.tag) == "entry"]
+    else:
+        entries = root.findall(".//item") + root.findall(".//{*}entry")
+
+    articles: List[Article] = []
+    for entry in entries:
+        title = child_text(entry, ["title"])
+        url = canonicalize_url(entry_link(entry))
+        if not title or not url:
+            continue
+
+        date_text = child_raw_text(entry, ["pubdate", "published", "updated", "date"])
+        published_at = parse_date(date_text)
+        summary = child_text(entry, ["description", "summary", "content", "encoded"])
+
+        articles.append(
+            Article(
+                source_name=source.name,
+                source_group=source.group,
+                title=title,
+                url=url,
+                published_at=published_at,
+                feed_summary=summary,
+            )
+        )
+    return articles
+
+
+def google_news_feed_url(query: str) -> str:
+    encoded = urllib.parse.quote_plus(query)
+    return f"https://news.google.com/rss/search?q={encoded}&hl=en-US&gl=US&ceid=US:en"
+
+
+def http_get(url: str, timeout: int = 20) -> requests.Response:
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/rss+xml, application/xml, text/xml, text/html;q=0.9, */*;q=0.8"}
+    response = requests.get(url, headers=headers, timeout=timeout)
+    response.raise_for_status()
+    return response
+
+
+def fetch_source(source: Source) -> Tuple[List[Article], Optional[str]]:
+    errors: List[str] = []
+    urls: List[Tuple[str, str]] = []
+    if source.feed_url:
+        urls.append(("feed", source.feed_url))
+    if source.google_news_query:
+        urls.append(("google_news", google_news_feed_url(source.google_news_query)))
+
+    for mode, url in urls:
+        try:
+            response = http_get(url)
+            articles = parse_feed_xml(response.content, source)
+            if articles:
+                logging.info("Fetched %s articles from %s via %s", len(articles), source.name, mode)
+                return articles, None
+            errors.append(f"{source.name}: no articles found in {mode}")
+        except Exception as exc:
+            errors.append(f"{source.name}: {mode} failed - {exc}")
+
+    return [], "; ".join(errors) if errors else f"{source.name}: no configured feed"
+
+
+def load_sources(path: Path) -> List[Source]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    source_dicts = data.get("sources", [])
+    sources: List[Source] = []
+    for item in source_dicts:
+        sources.append(
+            Source(
+                name=item["name"],
+                group=item.get("group", "general"),
+                feed_url=item.get("feed_url"),
+                homepage=item.get("homepage"),
+                google_news_query=item.get("google_news_query"),
+                topic_filter=item.get("topic_filter") or [],
+                weight=float(item.get("weight", 1.0)),
+            )
+        )
+    return sources
+
+
+def load_retail_keywords(path: Optional[Path]) -> Dict[str, List[str]]:
+    if path and path.exists():
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if "retail_keywords" in data:
+            return {str(k): [str(x) for x in v] for k, v in data["retail_keywords"].items()}
+    return DEFAULT_RETAIL_KEYWORDS
+
+
+def article_text(article: Article) -> str:
+    return normalize_space(" ".join([article.title, article.feed_summary, article.content]))
+
+
+def keyword_hit(text: str, keyword: str) -> bool:
+    # Multi-word keywords can be a simple substring. Short keywords get word boundaries.
+    k = keyword.lower().strip()
+    if not k:
+        return False
+    if len(k) <= 3 and k.isalnum():
+        return re.search(rf"\b{re.escape(k)}\b", text, re.I) is not None
+    return k in text.lower()
+
+
+def matches_topic_filter(article: Article, source: Source) -> bool:
+    if not source.topic_filter:
+        return True
+    text = article_text(article)
+    return any(keyword_hit(text, term) for term in source.topic_filter)
+
+
+def classify_article(article: Article, retail_keywords: Dict[str, List[str]]) -> None:
+    text = article_text(article)
+    tags: List[str] = []
+    for tag, words in TAG_KEYWORDS.items():
+        if any(keyword_hit(text, w) for w in words):
+            tags.append(tag)
+
+    retail_categories: List[str] = []
+    for category, words in retail_keywords.items():
+        if any(keyword_hit(text, w) for w in words):
+            retail_categories.append(category)
+
+    if retail_categories and "retail" not in tags:
+        tags.append("retail")
+
+    article.tags = sorted(set(tags))
+    article.retail_categories = sorted(set(retail_categories))
+
+
+def score_article(article: Article, source_weight: float = 1.0) -> float:
+    now = datetime.now(timezone.utc)
+    score = 1.0 * source_weight
+    if article.published_at:
+        age_days = max(0.0, (now - article.published_at).total_seconds() / 86400)
+        score += max(0.0, 3.0 - (age_days * 0.35))
+    else:
+        score += 0.5
+
+    text = article_text(article).lower()
+    title = article.title.lower()
+    for word in IMPORTANCE_KEYWORDS:
+        if word in title:
+            score += 0.5
+        elif word in text:
+            score += 0.2
+
+    if article.retail_categories:
+        score += 1.2
+    if "policy-safety" in article.tags:
+        score += 0.6
+    if "models" in article.tags or "agents" in article.tags:
+        score += 0.4
+    if article.source_group in {"lab", "policy", "research"}:
+        score += 0.25
+    return round(score, 3)
+
+
+def deduplicate_articles(articles: Iterable[Article]) -> List[Article]:
+    seen_urls: set[str] = set()
+    seen_titles: set[str] = set()
+    deduped: List[Article] = []
+    for article in articles:
+        url_key = canonicalize_url(article.url)
+        title_key = re.sub(r"[^a-z0-9]+", " ", article.title.lower()).strip()
+        title_key = re.sub(r"\s+", " ", title_key)
+        if url_key in seen_urls or title_key in seen_titles:
+            continue
+        seen_urls.add(url_key)
+        seen_titles.add(title_key)
+        deduped.append(article)
+    return deduped
+
+
+def fetch_page_content(url: str) -> str:
+    # Optional. Many publishers block full-text extraction; the digest still works on RSS snippets.
+    try:
+        response = http_get(url, timeout=15)
+    except Exception as exc:
+        logging.debug("Could not fetch article page %s: %s", url, exc)
+        return ""
+
+    ctype = response.headers.get("content-type", "")
+    if "text/html" not in ctype and "application/xhtml" not in ctype:
+        return ""
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    for tag in soup(["script", "style", "noscript", "header", "footer", "nav", "aside"]):
+        tag.decompose()
+
+    candidate = soup.find("article") or soup.find("main") or soup.body
+    if not candidate:
+        return ""
+    paragraphs = [normalize_space(p.get_text(" ")) for p in candidate.find_all(["p", "h1", "h2", "li"])]
+    text = normalize_space(" ".join([p for p in paragraphs if len(p) > 20]))
+    # Keep enough context for summarization, not full republication.
+    return text[:6000]
+
+
+def split_sentences(text: str) -> List[str]:
+    text = normalize_space(text)
+    if not text:
+        return []
+    pieces = re.split(r"(?<=[.!?])\s+", text)
+    return [p.strip() for p in pieces if len(p.strip()) > 20]
+
+
+def fallback_summary(article: Article) -> Tuple[str, str, str]:
+    base = article.feed_summary or article.content or article.title
+    sentences = split_sentences(base)
+    if not sentences:
+        summary = article.title
+    else:
+        summary = " ".join(sentences[:2])
+    summary = summary[:650]
+
+    if article.retail_categories:
+        retail = "Relevant voor retail door: " + ", ".join(article.retail_categories[:3]) + "."
+        why = "Kan invloed hebben op commerciële strategie, operatie, klantbeleving of datagedreven besluitvorming."
+    elif "policy-safety" in article.tags:
+        retail = ""
+        why = "Belangrijk voor compliance, risico-inschatting en governance rond AI-toepassingen."
+    elif "chips-infra" in article.tags:
+        retail = ""
+        why = "Kan impact hebben op kosten, beschikbaarheid en schaalbaarheid van AI-toepassingen."
+    elif "agents" in article.tags:
+        retail = ""
+        why = "Relevant omdat agentic AI werkprocessen kan automatiseren en softwaregebruik verandert."
+    else:
+        retail = ""
+        why = "Belangrijk signaal binnen AI-ontwikkeling, adoptie of marktbeweging."
+
+    return summary, why, retail
+
+
+def parse_json_object(text: str) -> Optional[Dict[str, Any]]:
+    text = text.strip()
+    if not text:
+        return None
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?", "", text, flags=re.I).strip()
+        text = re.sub(r"```$", "", text).strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        match = re.search(r"\{.*\}", text, re.S)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except Exception:
+                return None
+    return None
+
+
+def openai_available(no_openai: bool) -> bool:
+    return (not no_openai) and bool(os.getenv("OPENAI_API_KEY")) and OpenAI is not None
+
+
+def summarize_article_with_openai(article: Article, model: str) -> Tuple[str, str, str]:
+    if OpenAI is None:
+        return fallback_summary(article)
+    client = OpenAI()
+    content = article.content or article.feed_summary or article.title
+    prompt = f"""
+Vat dit nieuwsitem samen voor een Nederlandstalige zakelijke AI-digest.
+Gebruik alleen informatie uit de tekst hieronder. Voeg geen feiten toe.
+Geef compact JSON terug met exact deze keys:
+- summary: 1-2 zinnen met de kern.
+- why_matters: 1 zin waarom dit belangrijk is voor AI-strategie of business.
+- retail_relevance: 0-2 zinnen, alleen als er een concrete retail/e-commerce/consumer commerce link is; anders lege string.
+
+Titel: {article.title}
+Bron: {article.source_name}
+Tags: {', '.join(article.tags)}
+Retailcategorieen: {', '.join(article.retail_categories)}
+Tekst/snippet:
+{content[:4500]}
+""".strip()
+    try:
+        response = client.responses.create(
+            model=model,
+            input=[
+                {"role": "system", "content": "Je bent een scherpe AI-nieuwsanalist voor executives. Schrijf in het Nederlands."},
+                {"role": "user", "content": prompt},
+            ],
+            max_output_tokens=450,
+        )
+        data = parse_json_object(response.output_text)
+        if data:
+            return (
+                normalize_space(str(data.get("summary", ""))) or fallback_summary(article)[0],
+                normalize_space(str(data.get("why_matters", ""))) or fallback_summary(article)[1],
+                normalize_space(str(data.get("retail_relevance", ""))) or fallback_summary(article)[2],
+            )
+    except Exception as exc:
+        logging.warning("OpenAI summary failed for %s: %s", article.title, exc)
+    return fallback_summary(article)
+
+
+def summarize_articles(articles: Iterable[Article], model: str, no_openai: bool = False) -> None:
+    use_openai = openai_available(no_openai)
+    for article in articles:
+        if use_openai:
+            summary, why, retail = summarize_article_with_openai(article, model=model)
+        else:
+            summary, why, retail = fallback_summary(article)
+        article.summary = summary
+        article.why_matters = why
+        article.retail_relevance = retail
+
+
+def executive_summary_with_openai(articles: List[Article], model: str, no_openai: bool = False) -> List[str]:
+    if not openai_available(no_openai) or OpenAI is None:
+        return fallback_executive_summary(articles)
+
+    client = OpenAI()
+    snippets = []
+    for idx, article in enumerate(articles[:25], 1):
+        snippets.append(
+            f"{idx}. {article.title} | {article.source_name} | tags={','.join(article.tags)} | summary={article.summary or article.feed_summary}"
+        )
+    prompt = f"""
+Maak een executive summary in het Nederlands voor een AI-nieuwsdigest.
+Gebruik alleen de items hieronder. Geef JSON terug: {{"executive_bullets": ["...", "...", "..."]}}
+Maak 4-6 bullets, concreet en zakelijk, met aparte aandacht voor retail als dat in de items voorkomt.
+
+Items:
+{chr(10).join(snippets)}
+""".strip()
+    try:
+        response = client.responses.create(
+            model=model,
+            input=[
+                {"role": "system", "content": "Je schrijft scherpe, feitelijke executive summaries in het Nederlands."},
+                {"role": "user", "content": prompt},
+            ],
+            max_output_tokens=500,
+        )
+        data = parse_json_object(response.output_text)
+        bullets = data.get("executive_bullets") if data else None
+        if isinstance(bullets, list) and bullets:
+            return [normalize_space(str(x)) for x in bullets[:6] if normalize_space(str(x))]
+    except Exception as exc:
+        logging.warning("OpenAI executive summary failed: %s", exc)
+    return fallback_executive_summary(articles)
+
+
+def fallback_executive_summary(articles: List[Article]) -> List[str]:
+    bullets: List[str] = []
+    if not articles:
+        return ["Geen relevante artikelen gevonden voor de gekozen periode."]
+    tag_counts: Dict[str, int] = {}
+    for article in articles:
+        for tag in article.tags:
+            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+    top_tags = sorted(tag_counts.items(), key=lambda kv: kv[1], reverse=True)[:4]
+    if top_tags:
+        bullets.append("Dominante thema's: " + ", ".join([f"{tag} ({count})" for tag, count in top_tags]) + ".")
+    retail_count = sum(1 for a in articles if a.retail_categories)
+    if retail_count:
+        bullets.append(f"Retail-signalen: {retail_count} items raken retail, e-commerce, pricing, voorraad, winkeloperatie of klantbeleving.")
+    bullets.append("Hoogst gerankte items: " + "; ".join([a.title for a in articles[:3]]) + ".")
+    return bullets[:6]
+
+
+def collect_articles(
+    sources: List[Source],
+    days: int,
+    fetch_pages: bool,
+    retail_keywords: Dict[str, List[str]],
+    sleep_seconds: float = 0.3,
+) -> Tuple[List[Article], List[str]]:
+    all_articles: List[Article] = []
+    source_errors: List[str] = []
+    source_by_name = {s.name: s for s in sources}
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    for source in sources:
+        articles, error = fetch_source(source)
+        if error:
+            source_errors.append(error)
+        for article in articles:
+            if article.published_at and article.published_at < cutoff:
+                continue
+            if not matches_topic_filter(article, source):
+                continue
+            classify_article(article, retail_keywords=retail_keywords)
+            article.score = score_article(article, source_weight=source.weight)
+            all_articles.append(article)
+        time.sleep(sleep_seconds)
+
+    all_articles = deduplicate_articles(all_articles)
+
+    if fetch_pages:
+        # Fetch pages after dedupe and initial ranking to avoid unnecessary requests.
+        all_articles.sort(key=lambda a: a.score, reverse=True)
+        for article in all_articles[:80]:
+            article.content = fetch_page_content(article.url)
+            # Reclassify with expanded text.
+            source = source_by_name.get(article.source_name, Source(name=article.source_name))
+            if not matches_topic_filter(article, source):
+                continue
+            classify_article(article, retail_keywords=retail_keywords)
+            article.score = score_article(article, source_weight=source.weight)
+            time.sleep(sleep_seconds)
+
+    all_articles.sort(key=lambda a: a.score, reverse=True)
+    return all_articles, source_errors
+
+
+def unique_preserve_order(articles: Iterable[Article]) -> List[Article]:
+    seen: set[str] = set()
+    out: List[Article] = []
+    for article in articles:
+        key = canonicalize_url(article.url) or article.title
+        if key not in seen:
+            seen.add(key)
+            out.append(article)
+    return out
+
+
+def build_report(
+    all_articles: List[Article],
+    days: int,
+    top_n: int,
+    retail_max: int,
+    model: str,
+    no_openai: bool,
+    timezone_name: str,
+    source_errors: List[str],
+) -> Report:
+    top_articles = all_articles[:top_n]
+    retail_articles = [a for a in all_articles if a.retail_categories][:retail_max]
+    research_articles = [a for a in all_articles if any(t in a.tags for t in ["research", "models", "open-source"])]
+    research_articles = research_articles[: max(6, top_n // 2)]
+    policy_articles = [a for a in all_articles if "policy-safety" in a.tags][: max(6, top_n // 2)]
+
+    to_summarize = unique_preserve_order(top_articles + retail_articles + research_articles + policy_articles)
+    summarize_articles(to_summarize, model=model, no_openai=no_openai)
+    executive_bullets = executive_summary_with_openai(to_summarize, model=model, no_openai=no_openai)
+
+    tz = ZoneInfo(timezone_name) if ZoneInfo else timezone.utc
+    generated_at = datetime.now(timezone.utc).astimezone(tz)  # type: ignore[arg-type]
+
+    return Report(
+        generated_at=generated_at,
+        period_days=days,
+        executive_bullets=executive_bullets,
+        top_articles=top_articles,
+        retail_articles=retail_articles,
+        research_articles=research_articles,
+        policy_articles=policy_articles,
+        all_articles=all_articles,
+        source_errors=source_errors,
+    )
+
+
+def pdf_safe(text: str) -> str:
+    return xml_escape(text or "", {"'": "&apos;", '"': "&quot;"})
+
+
+def fmt_date(dt: Optional[datetime], timezone_name: str = "Europe/Amsterdam") -> str:
+    if not dt:
+        return "datum onbekend"
+    try:
+        tz = ZoneInfo(timezone_name) if ZoneInfo else timezone.utc
+        return dt.astimezone(tz).strftime("%d-%m-%Y %H:%M")
+    except Exception:
+        return dt.strftime("%d-%m-%Y %H:%M UTC")
+
+
+def article_paragraphs(article: Article, styles: Dict[str, ParagraphStyle], timezone_name: str) -> List[Any]:
+    elems: List[Any] = []
+    elems.append(Paragraph(pdf_safe(article.title), styles["ArticleTitle"]))
+    meta_bits = [article.source_name, fmt_date(article.published_at, timezone_name)]
+    if article.tags:
+        meta_bits.append("tags: " + ", ".join(article.tags))
+    elems.append(Paragraph(pdf_safe(" | ".join(meta_bits)), styles["Meta"]))
+    if article.summary:
+        elems.append(Paragraph(pdf_safe(article.summary), styles["BodyText"]))
+    if article.why_matters:
+        elems.append(Paragraph(f"<b>Waarom belangrijk:</b> {pdf_safe(article.why_matters)}", styles["BodyText"]))
+    if article.retail_relevance:
+        elems.append(Paragraph(f"<b>Retail relevantie:</b> {pdf_safe(article.retail_relevance)}", styles["BodyText"]))
+    elif article.retail_categories:
+        elems.append(Paragraph(f"<b>Retail categorieen:</b> {pdf_safe(', '.join(article.retail_categories))}", styles["BodyText"]))
+    href = pdf_safe(article.url)
+    elems.append(Paragraph(f'<a href="{href}">Open bron</a>', styles["Link"]))
+    elems.append(Spacer(1, 0.18 * cm))
+    return elems
+
+
+def add_section(
+    story: List[Any],
+    title: str,
+    articles: List[Article],
+    styles: Dict[str, ParagraphStyle],
+    timezone_name: str,
+    empty_text: str,
+) -> None:
+    story.append(Paragraph(pdf_safe(title), styles["Heading2Custom"]))
+    if not articles:
+        story.append(Paragraph(pdf_safe(empty_text), styles["BodyText"]))
+        story.append(Spacer(1, 0.25 * cm))
+        return
+    for article in articles:
+        story.extend(article_paragraphs(article, styles, timezone_name=timezone_name))
+
+
+def build_pdf_styles() -> Dict[str, ParagraphStyle]:
+    base = getSampleStyleSheet()
+    styles: Dict[str, ParagraphStyle] = dict(base.byName)
+    styles["TitleCustom"] = ParagraphStyle(
+        "TitleCustom",
+        parent=base["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=20,
+        leading=24,
+        alignment=TA_CENTER,
+        spaceAfter=12,
+    )
+    styles["Heading2Custom"] = ParagraphStyle(
+        "Heading2Custom",
+        parent=base["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=14,
+        leading=17,
+        spaceBefore=12,
+        spaceAfter=8,
+    )
+    styles["ArticleTitle"] = ParagraphStyle(
+        "ArticleTitle",
+        parent=base["Heading3"],
+        fontName="Helvetica-Bold",
+        fontSize=11.5,
+        leading=14,
+        spaceBefore=6,
+        spaceAfter=3,
+    )
+    styles["Meta"] = ParagraphStyle(
+        "Meta",
+        parent=base["Normal"],
+        fontName="Helvetica-Oblique",
+        fontSize=8.5,
+        leading=10,
+        textColor=colors.HexColor("#555555"),
+        spaceAfter=4,
+    )
+    styles["Link"] = ParagraphStyle(
+        "Link",
+        parent=base["Normal"],
+        fontSize=8.5,
+        leading=10,
+        textColor=colors.HexColor("#1a0dab"),
+    )
+    styles["Small"] = ParagraphStyle(
+        "Small",
+        parent=base["Normal"],
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor("#555555"),
+    )
+    styles["BodyText"] = ParagraphStyle(
+        "BodyText",
+        parent=base["BodyText"],
+        fontName="Helvetica",
+        fontSize=9.5,
+        leading=12.5,
+        spaceAfter=4,
+    )
+    return styles
+
+
+def page_footer(canvas, doc) -> None:  # type: ignore[no-untyped-def]
+    canvas.saveState()
+    canvas.setFont("Helvetica", 8)
+    canvas.setFillColor(colors.HexColor("#666666"))
+    page = f"Pagina {doc.page}"
+    canvas.drawRightString(A4[0] - 1.6 * cm, 1.0 * cm, page)
+    canvas.drawString(1.6 * cm, 1.0 * cm, "AI News Digest - samenvattingen met links naar originele bronnen")
+    canvas.restoreState()
+
+
+def generate_pdf(report: Report, pdf_path: Path, timezone_name: str = "Europe/Amsterdam") -> None:
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    doc = SimpleDocTemplate(
+        str(pdf_path),
+        pagesize=A4,
+        rightMargin=1.6 * cm,
+        leftMargin=1.6 * cm,
+        topMargin=1.5 * cm,
+        bottomMargin=1.5 * cm,
+    )
+    styles = build_pdf_styles()
+    story: List[Any] = []
+
+    story.append(Paragraph("AI News Digest", styles["TitleCustom"]))
+    story.append(
+        Paragraph(
+            pdf_safe(f"Gegenereerd: {report.generated_at.strftime('%d-%m-%Y %H:%M %Z')} | Periode: laatste {report.period_days} dagen"),
+            styles["Small"],
+        )
+    )
+    story.append(Spacer(1, 0.2 * cm))
+    story.append(HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#dddddd")))
+
+    story.append(Paragraph("Executive summary", styles["Heading2Custom"]))
+    for bullet in report.executive_bullets:
+        story.append(Paragraph(f"- {pdf_safe(bullet)}", styles["BodyText"]))
+    story.append(Spacer(1, 0.2 * cm))
+
+    stats = [
+        ["Totaal gevonden", str(len(report.all_articles))],
+        ["Belangrijkste items", str(len(report.top_articles))],
+        ["Retail-specifieke items", str(len(report.retail_articles))],
+        ["Policy/safety items", str(len(report.policy_articles))],
+    ]
+    table = Table(stats, colWidths=[6 * cm, 3 * cm])
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f4f4f4")),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#dddddd")),
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+    story.append(table)
+    story.append(Spacer(1, 0.2 * cm))
+
+    add_section(
+        story,
+        "Belangrijkste AI nieuws",
+        report.top_articles,
+        styles,
+        timezone_name,
+        "Geen relevante AI-items gevonden.",
+    )
+
+    story.append(PageBreak())
+    add_section(
+        story,
+        "Retail-specifieke AI signalen",
+        report.retail_articles,
+        styles,
+        timezone_name,
+        "Geen retail-specifieke AI-items gevonden in deze periode.",
+    )
+
+    add_section(
+        story,
+        "Onderzoek, modellen en open source",
+        report.research_articles,
+        styles,
+        timezone_name,
+        "Geen aparte research/model-items gevonden.",
+    )
+
+    add_section(
+        story,
+        "Beleid, veiligheid en governance",
+        report.policy_articles,
+        styles,
+        timezone_name,
+        "Geen aparte policy/safety-items gevonden.",
+    )
+
+    if report.source_errors:
+        story.append(Paragraph("Bronnen met foutmelding", styles["Heading2Custom"]))
+        story.append(
+            Paragraph(
+                pdf_safe("Sommige feeds kunnen tijdelijk blokkeren of van URL wijzigen. Controleer sources.yaml."),
+                styles["Small"],
+            )
+        )
+        for error in report.source_errors[:20]:
+            story.append(Paragraph("- " + pdf_safe(error[:250]), styles["Small"]))
+
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(HRFlowable(width="100%", thickness=0.8, color=colors.HexColor("#dddddd")))
+    story.append(
+        Paragraph(
+            pdf_safe(
+                "Let op: dit rapport bevat samenvattingen en links. De rechten op de originele artikelen blijven bij de uitgevers."
+            ),
+            styles["Small"],
+        )
+    )
+
+    doc.build(story, onFirstPage=page_footer, onLaterPages=page_footer)
+
+
+def article_html(article: Article, timezone_name: str) -> str:
+    tags = ", ".join(article.tags)
+    retail = ""
+    if article.retail_relevance:
+        retail = f"<p><strong>Retail relevantie:</strong> {html.escape(article.retail_relevance)}</p>"
+    elif article.retail_categories:
+        retail = f"<p><strong>Retail categorieen:</strong> {html.escape(', '.join(article.retail_categories))}</p>"
+    return f"""
+    <article style="margin: 0 0 18px 0; padding-bottom: 12px; border-bottom: 1px solid #eee;">
+      <h3 style="margin: 0 0 4px 0;">{html.escape(article.title)}</h3>
+      <p style="color:#666; margin: 0 0 8px 0; font-size: 12px;">{html.escape(article.source_name)} | {html.escape(fmt_date(article.published_at, timezone_name))} | tags: {html.escape(tags)}</p>
+      <p>{html.escape(article.summary or article.feed_summary)}</p>
+      <p><strong>Waarom belangrijk:</strong> {html.escape(article.why_matters)}</p>
+      {retail}
+      <p><a href="{html.escape(article.url, quote=True)}">Open bron</a></p>
+    </article>
+    """
+
+
+def generate_html(report: Report, html_path: Path, timezone_name: str = "Europe/Amsterdam") -> str:
+    html_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def section(title: str, articles: List[Article], empty: str) -> str:
+        body = "".join(article_html(a, timezone_name) for a in articles) if articles else f"<p>{html.escape(empty)}</p>"
+        return f"<h2>{html.escape(title)}</h2>{body}"
+
+    bullets = "".join(f"<li>{html.escape(b)}</li>" for b in report.executive_bullets)
+    doc = f"""<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <title>AI News Digest</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.45; max-width: 860px; margin: 24px auto; color: #111;">
+  <h1>AI News Digest</h1>
+  <p style="color:#666;">Gegenereerd: {html.escape(report.generated_at.strftime('%d-%m-%Y %H:%M %Z'))} | Periode: laatste {report.period_days} dagen</p>
+  <h2>Executive summary</h2>
+  <ul>{bullets}</ul>
+  {section('Belangrijkste AI nieuws', report.top_articles, 'Geen relevante AI-items gevonden.')}
+  {section('Retail-specifieke AI signalen', report.retail_articles, 'Geen retail-specifieke AI-items gevonden in deze periode.')}
+  {section('Onderzoek, modellen en open source', report.research_articles, 'Geen aparte research/model-items gevonden.')}
+  {section('Beleid, veiligheid en governance', report.policy_articles, 'Geen aparte policy/safety-items gevonden.')}
+  <hr>
+  <p style="color:#666; font-size: 12px;">Dit rapport bevat samenvattingen en links. De rechten op de originele artikelen blijven bij de uitgevers.</p>
+</body>
+</html>
+"""
+    html_path.write_text(doc, encoding="utf-8")
+    return doc
+
+
+def save_json(report: Report, json_path: Path) -> None:
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "generated_at": report.generated_at.isoformat(),
+        "period_days": report.period_days,
+        "executive_bullets": report.executive_bullets,
+        "top_articles": [a.as_json() for a in report.top_articles],
+        "retail_articles": [a.as_json() for a in report.retail_articles],
+        "research_articles": [a.as_json() for a in report.research_articles],
+        "policy_articles": [a.as_json() for a in report.policy_articles],
+        "all_articles": [a.as_json() for a in report.all_articles],
+        "source_errors": report.source_errors,
+    }
+    json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def send_email(
+    subject: str,
+    html_body: str,
+    pdf_path: Optional[Path] = None,
+) -> None:
+    host = os.getenv("SMTP_HOST")
+    port = int(os.getenv("SMTP_PORT", "587"))
+    user = os.getenv("SMTP_USER")
+    password = os.getenv("SMTP_PASSWORD")
+    sender = os.getenv("EMAIL_FROM") or user
+    recipients = [x.strip() for x in os.getenv("EMAIL_TO", "").split(",") if x.strip()]
+
+    if not host or not sender or not recipients:
+        raise ValueError("SMTP_HOST, EMAIL_FROM/SMTP_USER and EMAIL_TO are required for e-mail")
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = sender
+    message["To"] = ", ".join(recipients)
+    message.set_content("Bekijk de HTML-versie van de AI News Digest in je e-mailclient of open de PDF-bijlage.")
+    message.add_alternative(html_body, subtype="html")
+
+    if pdf_path and pdf_path.exists():
+        message.add_attachment(
+            pdf_path.read_bytes(),
+            maintype="application",
+            subtype="pdf",
+            filename=pdf_path.name,
+        )
+
+    use_ssl = env_bool("SMTP_SSL", False)
+    use_starttls = env_bool("SMTP_STARTTLS", True)
+    if use_ssl:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(host, port, context=context) as server:
+            if user and password:
+                server.login(user, password)
+            server.send_message(message)
+    else:
+        with smtplib.SMTP(host, port) as server:
+            if use_starttls:
+                server.starttls(context=ssl.create_default_context())
+            if user and password:
+                server.login(user, password)
+            server.send_message(message)
+
+
+def sample_articles(retail_keywords: Dict[str, List[str]]) -> List[Article]:
+    now = datetime.now(timezone.utc)
+    samples = [
+        Article(
+            source_name="Sample Lab",
+            source_group="lab",
+            title="New multimodal model improves agent workflows for enterprise users",
+            url="https://example.com/model-agent-workflows",
+            published_at=now - timedelta(hours=8),
+            feed_summary="A research lab introduced a multimodal model that can plan tool calls, inspect documents and support multi-step business workflows.",
+        ),
+        Article(
+            source_name="Sample Retail Tech",
+            source_group="media",
+            title="Retailers test AI shopping assistants for product search and loyalty personalization",
+            url="https://example.com/retail-shopping-assistants",
+            published_at=now - timedelta(hours=15),
+            feed_summary="Large retailers are testing generative AI shopping assistants that combine product search, recommendations, loyalty data and customer service in one interface.",
+        ),
+        Article(
+            source_name="Sample Policy",
+            source_group="policy",
+            title="Regulators publish guidance on AI transparency and model risk management",
+            url="https://example.com/ai-governance-guidance",
+            published_at=now - timedelta(days=1),
+            feed_summary="New guidance emphasizes documentation, risk assessment, auditability and human oversight for high-impact AI systems.",
+        ),
+        Article(
+            source_name="Sample Supply Chain",
+            source_group="media",
+            title="Grocers use demand forecasting models to reduce stockouts and markdowns",
+            url="https://example.com/grocery-demand-forecasting",
+            published_at=now - timedelta(days=2),
+            feed_summary="Grocery chains are expanding AI demand planning to improve replenishment, reduce out-of-stock rates and optimize promotions.",
+        ),
+        Article(
+            source_name="Sample Infra",
+            source_group="media",
+            title="Cloud providers expand inference infrastructure as AI usage grows",
+            url="https://example.com/inference-infrastructure",
+            published_at=now - timedelta(days=2, hours=6),
+            feed_summary="Cloud and chip providers are adding inference capacity for enterprises that are scaling production AI use cases.",
+        ),
+    ]
+    for article in samples:
+        classify_article(article, retail_keywords=retail_keywords)
+        article.score = score_article(article, source_weight=1.0)
+    samples.sort(key=lambda a: a.score, reverse=True)
+    return samples
+
+
+def default_paths() -> Dict[str, Path]:
+    base = Path(__file__).resolve().parent
+    out = base / "output"
+    return {
+        "sources": base / "sources.yaml",
+        "retail_keywords": base / "retail_keywords.yaml",
+        "pdf": out / "ai_news_digest.pdf",
+        "html": out / "ai_news_digest.html",
+        "json": out / "ai_news_digest.json",
+    }
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    paths = default_paths()
+    parser = argparse.ArgumentParser(description="Collect AI news and generate a Dutch PDF/e-mail digest with a retail section.")
+    parser.add_argument("--sources", type=Path, default=paths["sources"], help="Path to sources.yaml")
+    parser.add_argument("--retail-keywords", type=Path, default=paths["retail_keywords"], help="Path to retail_keywords.yaml")
+    parser.add_argument("--days", type=int, default=3, help="Lookback period in days")
+    parser.add_argument("--top-n", type=int, default=18, help="Number of top AI articles in the main section")
+    parser.add_argument("--retail-max", type=int, default=12, help="Maximum number of retail-specific articles")
+    parser.add_argument("--fetch-pages", action="store_true", help="Fetch article pages for richer summaries; RSS snippets are used by default")
+    parser.add_argument("--pdf", type=Path, default=paths["pdf"], help="Output PDF path")
+    parser.add_argument("--html", type=Path, default=paths["html"], help="Output HTML path")
+    parser.add_argument("--json", type=Path, default=paths["json"], help="Output JSON path")
+    parser.add_argument("--email", action="store_true", help="Send the digest by SMTP using environment variables")
+    parser.add_argument("--sample", action="store_true", help="Use built-in sample data instead of fetching live feeds")
+    parser.add_argument("--no-openai", action="store_true", help="Disable OpenAI summaries even when OPENAI_API_KEY is set")
+    parser.add_argument("--model", default=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"), help="OpenAI model for summaries")
+    parser.add_argument("--timezone", default=os.getenv("DIGEST_TIMEZONE", "Europe/Amsterdam"), help="Display timezone")
+    parser.add_argument("--log-level", default=os.getenv("LOG_LEVEL", "INFO"), help="DEBUG, INFO, WARNING, ERROR")
+    return parser
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    args = build_arg_parser().parse_args(argv)
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper(), logging.INFO),
+        format="%(levelname)s: %(message)s",
+    )
+
+    retail_keywords = load_retail_keywords(args.retail_keywords)
+    if args.sample:
+        articles = sample_articles(retail_keywords)
+        source_errors: List[str] = []
+    else:
+        sources = load_sources(args.sources)
+        articles, source_errors = collect_articles(
+            sources=sources,
+            days=args.days,
+            fetch_pages=args.fetch_pages,
+            retail_keywords=retail_keywords,
+        )
+
+    report = build_report(
+        all_articles=articles,
+        days=args.days,
+        top_n=args.top_n,
+        retail_max=args.retail_max,
+        model=args.model,
+        no_openai=args.no_openai,
+        timezone_name=args.timezone,
+        source_errors=source_errors,
+    )
+
+    generate_pdf(report, args.pdf, timezone_name=args.timezone)
+    html_body = generate_html(report, args.html, timezone_name=args.timezone)
+    save_json(report, args.json)
+
+    if args.email:
+        subject_prefix = os.getenv("EMAIL_SUBJECT_PREFIX", "AI News Digest")
+        subject = f"{subject_prefix} - {report.generated_at.strftime('%d-%m-%Y')}"
+        send_email(subject=subject, html_body=html_body, pdf_path=args.pdf)
+        logging.info("E-mail sent")
+
+    logging.info("PDF: %s", args.pdf)
+    logging.info("HTML: %s", args.html)
+    logging.info("JSON: %s", args.json)
+    logging.info("Articles found: %s", len(report.all_articles))
+    if source_errors:
+        logging.warning("Source errors: %s", len(source_errors))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

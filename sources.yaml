@@ -1,0 +1,148 @@
+# AI News Digest Agent
+
+Deze agent verzamelt internationaal AI-nieuws uit RSS/Atom-feeds, dedupliceert artikelen, rangschikt ze op relevantie en recentheid, vat ze samen in het Nederlands en maakt:
+
+- een PDF-rapport;
+- een HTML-versie voor e-mail;
+- een JSON-export voor verdere verwerking;
+- een aparte sectie met retail-specifieke AI-signalen.
+
+De agent gebruikt RSS/Atom als primaire bron. Dat is stabieler en respectvoller dan websites volledig scrapen. Bij bronnen zonder betrouwbare feed kan `sources.yaml` een Google News RSS-query gebruiken als fallback.
+
+## Wat zit erin?
+
+```text
+ai_news_agent.py          Hoofdscript
+sources.yaml              Bronnenlijst
+retail_keywords.yaml      Retail-taxonomie en trefwoorden
+requirements.txt          Python dependencies
+.env.example              Voorbeeldconfiguratie
+.github/workflows/        Voorbeeld van geplande GitHub Actions-run
+output/                   Map voor gegenereerde rapporten
+```
+
+## Installatie
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+Vul daarna eventueel `OPENAI_API_KEY` en SMTP-gegevens in `.env` in. Het script leest environment variables; gebruik bijvoorbeeld `set -a && source .env && set +a` voordat je draait.
+
+## Snel testen met sampledata
+
+```bash
+python ai_news_agent.py --sample --no-openai
+```
+
+Output:
+
+```text
+output/ai_news_digest.pdf
+output/ai_news_digest.html
+output/ai_news_digest.json
+```
+
+## Live nieuws verzamelen
+
+```bash
+python ai_news_agent.py --days 3 --top-n 18 --retail-max 12
+```
+
+Met pagina-extractie voor rijkere samenvattingen:
+
+```bash
+python ai_news_agent.py --days 3 --fetch-pages
+```
+
+Let op: sommige publishers blokkeren pagina-extractie. De agent blijft dan werken met RSS-snippets.
+
+## Betere samenvattingen met OpenAI
+
+Zet een API-key en model in je environment:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+export OPENAI_MODEL="gpt-4.1-mini"
+python ai_news_agent.py --days 3
+```
+
+Zonder API-key gebruikt de agent een eenvoudige extractive fallback.
+
+## E-mail versturen
+
+Vul in `.env`:
+
+```text
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_STARTTLS=true
+SMTP_USER=...
+SMTP_PASSWORD=...
+EMAIL_FROM=...
+EMAIL_TO=naam@bedrijf.nl,ander@bedrijf.nl
+```
+
+Draai dan:
+
+```bash
+set -a && source .env && set +a
+python ai_news_agent.py --days 3 --email
+```
+
+De e-mail bevat HTML en de PDF als bijlage.
+
+## Dagelijks plannen met cron
+
+Voor een server of laptop:
+
+```cron
+TZ=Europe/Amsterdam
+0 7 * * 1-5 cd /pad/naar/ai_news_agent && . .venv/bin/activate && set -a && . .env && set +a && python ai_news_agent.py --days 1 --email >> output/cron.log 2>&1
+```
+
+## Bronnen aanpassen
+
+Bewerk `sources.yaml`. Voor elke bron kun je gebruiken:
+
+```yaml
+- name: Voorbeeldbron
+  group: media
+  feed_url: https://example.com/feed.xml
+  google_news_query: site:example.com artificial intelligence OR AI
+  topic_filter: [artificial intelligence, generative AI, LLM]
+  weight: 1.0
+```
+
+`topic_filter` is handig voor brede feeds, bijvoorbeeld algemene techsites of beleidssites.
+
+## Retail-sectie aanpassen
+
+Bewerk `retail_keywords.yaml` als jouw retailfocus specifieker is, bijvoorbeeld:
+
+- fashion/apparel;
+- grocery;
+- marketplaces;
+- loyalty en CRM;
+- supply chain;
+- demand forecasting;
+- pricing en promotions;
+- in-store computer vision;
+- retail media.
+
+## Veilig en netjes gebruik
+
+- Publiceer geen volledige artikelen opnieuw.
+- Gebruik de PDF als interne briefing met samenvattingen en bronlinks.
+- Respecteer robots.txt, betaalmuren en voorwaarden van publishers.
+- Gebruik redelijke frequenties; dagelijks of wekelijks is meestal genoeg.
+
+## Probleemoplossing
+
+- Geen artikelen: controleer of de feed-URL nog werkt of voeg `google_news_query` toe.
+- Veel irrelevante items: voeg `topic_filter` toe of verhoog/verlaag `weight`.
+- Geen retail-items: breid `retail_keywords.yaml` uit met je eigen merken, categorieen en use cases.
+- SMTP-fout: controleer host, poort, app-passwords en TLS/SSL-instellingen.
