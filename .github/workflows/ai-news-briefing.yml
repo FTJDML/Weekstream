@@ -1,0 +1,102 @@
+name: CGI AI Retail Weekly Content Stream
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Vrijdag 07:30 Nederlandse tijd.
+    # GitHub cron draait in UTC, daarom twee tijden voor zomer- en wintertijd.
+    - cron: "30 5 * * 5"
+    - cron: "30 6 * * 5"
+
+jobs:
+  weekly-stream:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Haal repository op
+        uses: actions/checkout@v4
+
+      - name: Bepaal agent-map
+        run: |
+          if [ -f "ai_news_agent.py" ]; then
+            echo "AGENT_DIR=." >> "$GITHUB_ENV"
+          elif [ -f "ai_news_agent/ai_news_agent.py" ]; then
+            echo "AGENT_DIR=ai_news_agent" >> "$GITHUB_ENV"
+          else
+            echo "Kan ai_news_agent.py niet vinden."
+            echo "Controleer of je de bestanden uit de zip hebt geupload."
+            exit 1
+          fi
+
+      - name: Installeer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Installeer dependencies
+        run: |
+          pip install -r "$AGENT_DIR/requirements.txt"
+
+      - name: Maak config.yaml als die nog niet bestaat
+        run: |
+          if [ ! -f "$AGENT_DIR/config.yaml" ]; then
+            cp "$AGENT_DIR/config.example.yaml" "$AGENT_DIR/config.yaml"
+          fi
+
+      - name: Genereer AI & Retail weekstream
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_CSE_API_KEY: ${{ secrets.GOOGLE_CSE_API_KEY }}
+          GOOGLE_CSE_CX: ${{ secrets.GOOGLE_CSE_CX }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          REPORT_PUBLIC_URL: ${{ secrets.REPORT_PUBLIC_URL }}
+          REPORT_PUBLIC_BASE_URL: ${{ secrets.REPORT_PUBLIC_BASE_URL }}
+        run: |
+          cd "$AGENT_DIR"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            python ai_news_agent.py --config config.yaml --weekly --schedule-guard
+          else
+            python ai_news_agent.py --config config.yaml --weekly
+          fi
+
+      - name: Zet website klaar voor GitHub Pages
+        run: |
+          rm -rf site
+          mkdir -p site/latest
+          mkdir -p site/content_streams
+
+          cp -R "$AGENT_DIR/out/latest/." site/latest/
+          cp -R "$AGENT_DIR/out/content_streams/." site/content_streams/ || true
+
+          cp "$AGENT_DIR/out/latest/index.html" site/index.html
+          touch site/.nojekyll
+
+      - name: Configureer GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload website
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Publiceer naar GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Bewaar output als artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cgi-ai-retail-weekstream
+          path: |
+            ${{ env.AGENT_DIR }}/out/latest/**
+            ${{ env.AGENT_DIR }}/out/content_streams/**
